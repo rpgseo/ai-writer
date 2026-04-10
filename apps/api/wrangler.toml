@@ -7,12 +7,12 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "ai-writer-db"
-database_id = "TO_BE_CREATED"
+database_id = "d78bda62-1f80-4863-a7ed-a052fc78ae4c"
 
 # KV Namespace for caching
 [[kv_namespaces]]
 binding = "CACHE"
-id = "TO_BE_CREATED"
+id = "02428b38948c42a2aada8f893acf360f"
 
 # R2 Bucket for storage
 [[r2_buckets]]

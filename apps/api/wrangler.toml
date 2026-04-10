@@ -22,7 +22,7 @@ bucket_name = "ai-writer-storage"
 # Environment variables (non-secret)
 [vars]
 ENVIRONMENT = "production"
-CORS_ORIGIN = "https://ai-writer.pages.dev"
+CORS_ORIGIN = "https://ai-writer-6pf.pages.dev"
 
 # Workflows
 # [[workflows]]

@@ -11,6 +11,7 @@ import { NeuronWriterService } from './neuronwriter';
 import { EeatScorer } from './eeat-scorer';
 import { LinkEngine } from './link-engine';
 import { FunnelClassifier } from './funnel-classifier';
+import { DeepSeekService } from './deepseek';
 import { generateId } from '../utils/id';
 
 /**
@@ -279,6 +280,7 @@ export class PipelineExecutor {
     const project = await this.getProject(projectId);
     const serper = new SerperService(this.env);
     const classifier = new FunnelClassifier();
+    const deepseek = new DeepSeekService(this.env);
     const lang = (project.language as string) || 'es';
 
     // Get pending clusters ordered by priority
@@ -298,6 +300,31 @@ export class PipelineExecutor {
       // Determine format and funnel
       const format = classifier.detectFormat(pillarKeyword);
       const funnelStage = cluster.funnel_stage as 'tofu' | 'mofu' | 'bofu';
+
+      // DeepSeek deep research on the topic
+      let researchEntities: string[] = JSON.parse(cluster.entity_gaps as string || '[]');
+      try {
+        const research = await deepseek.researchTopic({
+          keyword: pillarKeyword,
+          language: lang,
+          secondaryKeywords: keywords.slice(1, 5).map((k) => k.keyword),
+          searchIntent: keywords[0]?.intent || 'informational',
+          funnelStage,
+        });
+
+        // Enrich entities with DeepSeek findings
+        const deepseekEntities = research.related_entities
+          .filter((e) => e.relevance === 'high')
+          .map((e) => e.entity);
+        researchEntities = [...new Set([...researchEntities, ...deepseekEntities])];
+
+        // Add PAA questions from research
+        if (research.common_questions.length > 0) {
+          serpAnalysis.paa = [...new Set([...serpAnalysis.paa, ...research.common_questions])].slice(0, 10);
+        }
+      } catch {
+        // DeepSeek is optional — continue without it
+      }
 
       // Create content brief
       const briefId = generateId();
@@ -325,7 +352,7 @@ export class PipelineExecutor {
           related_searches: serpAnalysis.relatedSearches,
         }),
         JSON.stringify(serpAnalysis.paa),
-        JSON.stringify(JSON.parse(cluster.entity_gaps as string || '[]')),
+        JSON.stringify(researchEntities),
         1500, // Default word count
         JSON.stringify([]),
         cluster.priority_score,
@@ -350,6 +377,7 @@ export class PipelineExecutor {
   private async runContentGeneration(projectId: string): Promise<Record<string, number>> {
     const project = await this.getProject(projectId);
     const contentGen = new ContentGenerator(this.env);
+    const deepseek = new DeepSeekService(this.env);
     const projectLang = (project.language as string) || 'es';
 
     // Get pending briefs
@@ -362,6 +390,39 @@ export class PipelineExecutor {
 
     for (const briefRow of briefs.results) {
       const brief = this.deserializeBrief(briefRow);
+
+      // DeepSeek deep research — gather facts, data, sources for Claude
+      try {
+        const research = await deepseek.researchTopic({
+          keyword: brief.target_keyword,
+          language: projectLang,
+          secondaryKeywords: brief.secondary_keywords.slice(0, 5),
+          searchIntent: brief.search_intent,
+          funnelStage: brief.funnel_stage,
+          existingEntities: brief.required_entities,
+        });
+
+        // Inject research context into the brief for Claude to use
+        const researchContext = [
+          research.key_facts.slice(0, 5).map((f) => `- ${f.fact} (${f.source})`).join('\n'),
+          research.statistics.slice(0, 3).map((s) => `- ${s.stat}: ${s.value} (${s.source}, ${s.year})`).join('\n'),
+          research.expert_insights.slice(0, 3).map((i) => `- ${i.insight} — ${i.attribution}`).join('\n'),
+        ].filter(Boolean).join('\n\n');
+
+        if (researchContext) {
+          brief.paa_questions = [...new Set([...brief.paa_questions, ...research.common_questions])].slice(0, 10);
+          // Add research as eeat_requirements context
+          brief.eeat_requirements = brief.eeat_requirements || {
+            experience_signals: [], expertise_signals: [], authority_signals: [], trust_signals: [],
+          };
+          brief.eeat_requirements.expertise_signals = [
+            ...brief.eeat_requirements.expertise_signals,
+            `Use these researched facts:\n${researchContext}`,
+          ];
+        }
+      } catch {
+        // DeepSeek is optional — continue without it
+      }
 
       // Generate outline first
       const outline = await contentGen.generateOutline(brief, projectLang);
@@ -414,6 +475,7 @@ export class PipelineExecutor {
     const project = await this.getProject(projectId);
     const eeatScorer = new EeatScorer();
     const contentGen = new ContentGenerator(this.env);
+    const deepseek = new DeepSeekService(this.env);
 
     // Get draft articles
     const articles = await this.env.DB.prepare(
@@ -438,14 +500,35 @@ export class PipelineExecutor {
         targetWordCount: (article.suggested_word_count as number) || 1500,
       });
 
-      // NeuronWriter analysis (if available — async pattern)
-      // For now just use E-E-A-T score
+      // DeepSeek fact-check
+      let factScore = 0;
+      try {
+        const factCheck = await deepseek.factCheck(
+          content,
+          (article.target_keyword as string) || (article.title as string),
+          (project.language as string) || 'es'
+        );
+        factScore = factCheck.score;
+
+        // Log fact-check results
+        await this.env.DB.prepare(
+          `INSERT INTO optimization_logs (id, article_id, iteration, eeat_score, fact_check_score, issues)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).bind(
+          generateId(), article.id,
+          (article.optimization_iterations as number) + 1,
+          eeatScore.total, factScore,
+          JSON.stringify(factCheck.issues.slice(0, 10))
+        ).run().catch(() => {}); // Non-critical, ignore errors
+      } catch {
+        // DeepSeek is optional
+      }
 
       // Update article with scores
       await this.env.DB.prepare(
-        `UPDATE articles SET eeat_score = ?, status = 'optimized', optimization_iterations = optimization_iterations + 1, updated_at = datetime('now')
+        `UPDATE articles SET eeat_score = ?, readability_score = ?, status = 'optimized', optimization_iterations = optimization_iterations + 1, updated_at = datetime('now')
          WHERE id = ?`
-      ).bind(eeatScore.total, article.id).run();
+      ).bind(eeatScore.total, factScore || null, article.id).run();
 
       optimized++;
     }

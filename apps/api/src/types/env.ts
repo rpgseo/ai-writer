@@ -16,6 +16,7 @@ export interface Env {
   DATAFORSEO_PASSWORD: string;
   NEURONWRITER_API_KEY: string;
   CLAUDE_API_KEY: string;
+  DEEPSEEK_API_KEY: string;
 
   // Variables
   ENVIRONMENT: string;

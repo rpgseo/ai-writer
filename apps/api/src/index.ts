@@ -175,6 +175,56 @@ api.put('/projects/:id/link-graph/:linkId', async (c) => {
   return c.json({ success: true, data: { id: linkId, status: body.status } });
 });
 
+// DeepSeek research endpoint
+api.post('/projects/:id/research', async (c) => {
+  const { id } = c.req.param();
+  const body = await c.req.json<{
+    keyword: string;
+    type?: 'topic' | 'competitors' | 'entities' | 'factcheck';
+    content?: string;
+    secondary_keywords?: string[];
+  }>();
+
+  if (!body.keyword) {
+    return c.json({ success: false, error: 'keyword is required' }, 400);
+  }
+
+  const project = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(id).first();
+  if (!project) {
+    return c.json({ success: false, error: 'Project not found' }, 404);
+  }
+
+  const { DeepSeekService } = await import('./services/deepseek');
+  const deepseek = new DeepSeekService(c.env);
+  const lang = (project.language as string) || 'es';
+  const type = body.type || 'topic';
+
+  let result: unknown;
+
+  switch (type) {
+    case 'topic':
+      result = await deepseek.researchTopic({
+        keyword: body.keyword,
+        language: lang,
+        secondaryKeywords: body.secondary_keywords,
+      });
+      break;
+    case 'entities':
+      result = await deepseek.expandEntities(body.keyword, body.secondary_keywords || [], lang);
+      break;
+    case 'factcheck':
+      if (!body.content) {
+        return c.json({ success: false, error: 'content is required for factcheck' }, 400);
+      }
+      result = await deepseek.factCheck(body.content, body.keyword, lang);
+      break;
+    default:
+      return c.json({ success: false, error: 'Invalid type. Use: topic, competitors, entities, factcheck' }, 400);
+  }
+
+  return c.json({ success: true, data: result });
+});
+
 // Mount API under /api
 app.route('/api', api);
 

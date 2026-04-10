@@ -1,0 +1,54 @@
+name = "ai-content-writer-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-writer-db"
+database_id = "TO_BE_CREATED"
+
+# KV Namespace for caching
+[[kv_namespaces]]
+binding = "CACHE"
+id = "TO_BE_CREATED"
+
+# R2 Bucket for storage
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "ai-writer-storage"
+
+# Environment variables (non-secret)
+[vars]
+ENVIRONMENT = "production"
+CORS_ORIGIN = "https://ai-writer.pages.dev"
+
+# Workflows
+# [[workflows]]
+# binding = "CONTENT_PIPELINE"
+# name = "content-pipeline"
+# class_name = "ContentPipelineWorkflow"
+
+# Queues (for async article processing)
+# [[queues.producers]]
+# binding = "ARTICLE_QUEUE"
+# queue = "article-processing"
+
+# [[queues.consumers]]
+# queue = "article-processing"
+# max_batch_size = 1
+# max_retries = 3
+
+# Secrets (set via: wrangler secret put <NAME>)
+# APP_API_KEY
+# FIRECRAWL_API_KEY
+# GOOGLE_NLP_API_KEY
+# GSC_CLIENT_ID
+# GSC_CLIENT_SECRET
+# GSC_REFRESH_TOKEN
+# SERPER_API_KEY
+# DATAFORSEO_LOGIN
+# DATAFORSEO_PASSWORD
+# NEURONWRITER_API_KEY
+# CLAUDE_API_KEY
